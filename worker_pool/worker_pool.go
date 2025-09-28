@@ -45,7 +45,7 @@ func main() {
 	//
 	//4 Collect results
 	for i := 0; i < len(numbers); i++ { //
-		res := <-results //
+		res := <-results //dsss
 	}
 	//Just to check
 

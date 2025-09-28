@@ -42,7 +42,7 @@ func main() {
 	//Why? //instead of launching len(numbers) goroutines immediately, we push them into channel
 	//Workers will pull them one by one
 	//closing channel is like saying that "all orders  placed no more new ones"
-
+	//
 	//4 Collect results
 	for i := 0; i < len(numbers); i++ {
 		res := <-results

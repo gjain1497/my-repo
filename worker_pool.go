@@ -22,7 +22,7 @@ func main() {
 
 	//2 Start workers
 	for w := 1; w <= 3; w++ {
-		go func(workerID int, jobs <- chan int, result <- chan int) {
+		go func(workerID int, jobs <-chan int, result <-chan int) {
 			for n := range jobs { //keep reading until jobs channel is closed
 				output := heavyCompute(n)
 				results <- output
@@ -34,25 +34,20 @@ func main() {
 
 	//3 Push jobs into the queue
 	//send all jobs
-	for _, n := range numbers{
-		jobs <- n //instead of launching len(numbers) goroutines immediately, we push them into channel 
+	for _, n := range numbers {
+		jobs <- n //instead of launching len(numbers) goroutines immediately, we push them into channel
 	}
 	close(jobs) //signal workers no more jobs
 
-	//Why? //instead of launching len(numbers) goroutines immediately, we push them into channel 
+	//Why? //instead of launching len(numbers) goroutines immediately, we push them into channel
 	//Workers will pull them one by one
 	//closing channel is like saying that "all orders  placed no more new ones"
 
-
 	//4 Collect results
-	for i := 0; i < len(numbers); i++{
-		res := <- results
+	for i := 0; i < len(numbers); i++ {
+		res := <-results
 	}
-
-
-	
-
-
+	//Just to check
 
 	// fmt.Println("Starting jobs without worker pool...")
 	// start := time.Now()

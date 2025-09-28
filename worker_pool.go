@@ -44,7 +44,7 @@ func main() {
 	//closing channel is like saying that "all orders  placed no more new ones"
 	//
 	//4 Collect results
-	for i := 0; i < len(numbers); i++ {
+	for i := 0; i < len(numbers); i++ { //
 		res := <-results
 	}
 	//Just to check

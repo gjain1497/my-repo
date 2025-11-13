@@ -14,6 +14,7 @@ func main() {
 	numbers := make([]int, numJobs)
 	for i := 0; i < numJobs; i++ {
 		numbers[i] = i + 1
+		numbers[i+1] = i
 	}
 
 	jobs := make(chan int, len(numbers)) //job queue

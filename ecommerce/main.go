@@ -119,7 +119,7 @@ type Order struct {
 	Id     string
 	Status OrderStatus
 	UserId string
-	//OrderItems map[string]OrderItems //(order-item-id -> OrderItems) //this will be more optimised
+	//OrderItems map[string]OrderItems//(order-item-id -> OrderItems) //this will be more optimised
 	// why map should not be used, explained in readme
 	OrderItems        []OrderItem
 	TotalAmount       float64

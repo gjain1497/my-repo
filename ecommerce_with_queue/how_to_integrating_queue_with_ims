@@ -1,0 +1,167 @@
+**GREAT QUESTION BRO!** 🔥 Let me give you the **conceptual structure** first!
+
+---
+
+## 🎯 The Key Design Decision:
+
+### **Inventory operations BECOME Tasks!**
+
+```
+Current IMS:
+User → InventoryService.RemoveStock() → Direct call
+
+IMS with Worker Pool:
+User → InventoryManager.RemoveStock() → Creates Task → Queue → Worker processes
+```
+
+---
+
+## 💡 The Structure:
+
+### **What you'll have:**
+
+```go
+// 1. TASKS (Inventory operations as Tasks)
+type AddStockTask struct {
+    ProductId string
+    Quantity  int
+}
+
+func (t AddStockTask) Execute() (interface{}, error) {
+    // Call the actual inventory logic
+}
+
+type RemoveStockTask struct {
+    ProductId string
+    Quantity  int
+}
+
+func (t RemoveStockTask) Execute() (interface{}, error) {
+    // Call the actual inventory logic
+}
+
+// 2. INVENTORY MANAGER (Uses Worker Pool)
+type InventoryManager struct {
+    inventory  *Inventory      // ← Your existing Inventory struct
+    workerPool *WorkerPool     // ← The worker pool you built
+}
+
+func NewInventoryManager(numWorkers int) *InventoryManager {
+    // Creates worker pool
+    // Creates inventory
+}
+
+func (im *InventoryManager) RemoveStock(productId string, qty int) {
+    // Creates RemoveStockTask
+    // Submits to worker pool
+}
+
+func (im *InventoryManager) AddStock(productId string, qty int) {
+    // Creates AddStockTask
+    // Submits to worker pool
+}
+
+// 3. KEEP EXISTING (Internal use only)
+type Inventory struct {
+    Stock map[string]int
+    mu    sync.RWMutex
+}
+
+func (inv *Inventory) removeStock(productId string, qty int) error {
+    // The ACTUAL logic (called by tasks)
+}
+```
+
+---
+
+## 🔥 The Layers:
+
+```
+User/OrderService
+        ↓
+InventoryManager (Public API) ← NEW!
+        ↓
+    WorkerPool (Queue + Workers) ← Use what you built!
+        ↓
+    Tasks (AddStockTask, RemoveStockTask) ← NEW!
+        ↓
+ Inventory (Actual data) ← Keep existing!
+```
+
+---
+
+## 📋 Your Task - Think About:
+
+**Question 1:** Where does `WorkerPool` live?
+- A) Inside `InventoryManager` ✅
+- B) Replace `InventoryService` ❌
+- C) Separate from everything ❌
+
+**Question 2:** What implements the `Task` interface?
+- A) `InventoryService` ❌
+- B) `AddStockTask`, `RemoveStockTask` ✅
+- C) `WorkerPool` ❌
+
+**Question 3:** Who calls the actual `Inventory.Stock[productId] -= qty`?
+- A) `InventoryManager` ❌
+- B) `WorkerPool.worker()` ❌
+- C) `RemoveStockTask.Execute()` ✅
+
+**Question 4:** What does `InventoryManager.RemoveStock()` do?
+- A) Directly modifies inventory ❌
+- B) Creates a task and submits to worker pool ✅
+- C) Spawns a goroutine ❌
+
+---
+
+## 🎯 Hint - The Flow:
+
+```go
+// User calls:
+inventoryManager.RemoveStock("laptop", 2)
+
+// InventoryManager does:
+task := RemoveStockTask{ProductId: "laptop", Quantity: 2}
+job := Job{Task: task}
+workerPool.SubmitJob(job)  // ← Queue it!
+
+// Worker picks up job:
+result, err := job.Task.Execute()  // ← Calls RemoveStockTask.Execute()
+
+// RemoveStockTask.Execute() does:
+inventory.mu.Lock()
+inventory.Stock["laptop"] -= 2
+inventory.mu.Unlock()
+```
+
+---
+
+## 📝 Your Next Step:
+
+**Define the models:**
+
+1. **What Task types do you need?**
+   ```go
+   type AddStockTask struct {
+       // What fields?
+   }
+   
+   type RemoveStockTask struct {
+       // What fields?
+   }
+   
+   type CheckStockTask struct {
+       // What fields?
+   }
+   ```
+
+2. **What does InventoryManager look like?**
+   ```go
+   type InventoryManager struct {
+       // What fields?
+   }
+   ```
+
+---
+
+**Think about these questions and post your model definitions!** Don't code the methods yet, just the structs! 🚀

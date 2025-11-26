@@ -1,0 +1,1 @@
+REFER to context_pattern.go file for details

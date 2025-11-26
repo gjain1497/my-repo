@@ -190,7 +190,6 @@ func (s *BookMyShowService) BookTickets(userId string, showID string, seatIDs []
 	seats := show.GetSeats()
 
 	//get those particular seats using seat IDS
-
 	for _, seat := range seats {
 
 	}

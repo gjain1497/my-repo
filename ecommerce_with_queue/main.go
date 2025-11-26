@@ -155,35 +155,244 @@ type Product struct {
 
 // InventoryService
 
-type InventoryService struct {
-	inventory *Inventory //single inventory not list of inventories here,
-	// Claude hope my understanding is correct here
+// type InventoryService struct {
+// 	inventory *Inventory //single inventory not list of inventories here,
+// 	// Claude hope my understanding is correct here
+// }
+
+// func (s *InventoryService) AddStock(productid string, quantity int) error {
+// 	s.inventory.mu.Lock()
+// 	defer s.inventory.mu.Unlock()
+// 	s.inventory.Stock[productid] += quantity
+// 	return nil
+// }
+
+// func (s *InventoryService) RemoveStock(productid string, quantity int) error {
+// 	s.inventory.mu.Lock()
+// 	defer s.inventory.mu.Unlock()
+// 	currQuantity := s.inventory.Stock[productid]
+// 	if currQuantity > 0 {
+// 		s.inventory.Stock[productid] -= quantity
+// 		return nil
+// 	}
+// 	return errors.New("Quantity is not enough")
+// }
+
+// // Check stock availability
+// func (s *InventoryService) CheckStock(productId string) (int, error) {
+// 	s.inventory.mu.Lock()
+// 	defer s.inventory.mu.Unlock()
+// 	quantity := s.inventory.Stock[productId]
+// 	return quantity, nil
+// }
+
+type Job struct {
+	ID       int
+	Task     Task
+	Priority int // optional (for later advanced features)
+	Attempts int // how many times job was tried
 }
 
-func (s *InventoryService) AddStock(productid string, quantity int) error {
-	s.inventory.mu.Lock()
-	defer s.inventory.mu.Unlock()
-	s.inventory.Stock[productid] += quantity
-	return nil
+type Result struct {
+	JobID  int
+	Err    error
+	Output interface{}
+}
+type WorkerPool struct {
+	NoOfWorkers    int
+	JobsChannel    chan Job
+	ResultsChannel chan Result
+	wg             sync.WaitGroup
 }
 
-func (s *InventoryService) RemoveStock(productid string, quantity int) error {
-	s.inventory.mu.Lock()
-	defer s.inventory.mu.Unlock()
-	currQuantity := s.inventory.Stock[productid]
-	if currQuantity > 0 {
-		s.inventory.Stock[productid] -= quantity
-		return nil
+func NewWorkerPool(numWorkers int, jobQueuesize int) *WorkerPool {
+	return &WorkerPool{
+		NoOfWorkers:    numWorkers,
+		JobsChannel:    make(chan Job, jobQueuesize),
+		ResultsChannel: make(chan Result, jobQueuesize),
 	}
-	return errors.New("Quantity is not enough")
 }
 
-// Check stock availability
-func (s *InventoryService) CheckStock(productId string) (int, error) {
-	s.inventory.mu.Lock()
-	defer s.inventory.mu.Unlock()
-	quantity := s.inventory.Stock[productId]
-	return quantity, nil
+func (w *WorkerPool) Start() {
+	for i := 1; i <= w.NoOfWorkers; i++ {
+		go w.worker(i) // Each worker runs in its own goroutine
+	}
+}
+func (w *WorkerPool) worker(workerID int) {
+	// Loop forever, processing jobs
+	for job := range w.JobsChannel { // Blocks until job arrives
+		//Execute the task
+		output, err := job.Task.Execute()
+
+		//Always send result(even if error occured, so
+		//that it does not block other workers)
+		w.ResultsChannel <- Result{
+			JobID:  job.ID,
+			Err:    err,
+			Output: output,
+		}
+		w.wg.Done()
+
+		// Optional: log
+		if err != nil {
+			fmt.Printf("Worker %d: Job %d failed: %v\n", workerID, job.ID, err)
+		} else {
+			fmt.Printf("Worker %d: Job %d completed\n", workerID, job.ID)
+		}
+	}
+}
+
+// Submit job to queue
+func (w *WorkerPool) SubmitJob(job Job) error {
+	//just send job  to channel
+	select {
+	case w.JobsChannel <- job:
+		w.wg.Add(1)
+		return nil
+	default:
+		return fmt.Errorf("job queue is full or pool is shut down")
+	}
+}
+
+func (w *WorkerPool) Wait() {
+	w.wg.Wait()
+}
+
+// Shutdown gracefully
+func (wp *WorkerPool) Shutdown() {
+	close(wp.JobsChannel)
+}
+
+type Task interface {
+	Execute() (interface{}, error)
+}
+
+type CheckStockTask struct {
+	ProductId string
+	Inventory *Inventory
+}
+
+// but what if the return types of each function would have been different.
+// How we would have handled that case?
+func (r *CheckStockTask) Execute() (interface{}, error) {
+	r.Inventory.mu.Lock()
+	defer r.Inventory.mu.Unlock()
+	quantity, exists := r.Inventory.Stock[r.ProductId]
+	if !exists {
+		return 0, nil // Or return error if product doesn't exist
+	}
+	return quantity, nil // ← Return nil error if successful!
+}
+
+type AddStockTask struct {
+	ProductId string
+	Quantity  int
+	Inventory *Inventory
+}
+
+func (r *AddStockTask) Execute() (interface{}, error) {
+	r.Inventory.mu.Lock()
+	defer r.Inventory.mu.Unlock()
+	r.Inventory.Stock[r.ProductId] += r.Quantity
+	return nil, nil
+}
+
+type RemoveStockTask struct {
+	ProductId string
+	Quantity  int
+	Inventory *Inventory
+}
+
+func (r *RemoveStockTask) Execute() (interface{}, error) {
+	r.Inventory.mu.Lock()
+	defer r.Inventory.mu.Unlock()
+
+	currentStock := r.Inventory.Stock[r.ProductId]
+	if currentStock < r.Quantity { // ← Check if enough stock exists!
+		return nil, fmt.Errorf("insufficient stock: have %d, need %d", currentStock, r.Quantity)
+	}
+
+	r.Inventory.Stock[r.ProductId] -= r.Quantity
+	return nil, nil
+}
+
+type InventoryManager struct {
+	inventory    *Inventory
+	WorkerPool   *WorkerPool
+	jobIDCounter int
+	mu           sync.Mutex
+}
+
+func NewInventoryManager(numWorkers, queueSize int) *InventoryManager {
+	//initalise worker pool
+	workerPool := NewWorkerPool(numWorkers, queueSize)
+	workerPool.Start()
+	// create inventory manager
+	return &InventoryManager{
+		inventory: &Inventory{
+			Stock: make(map[string]int),
+		},
+		WorkerPool: workerPool,
+	}
+}
+func (im *InventoryManager) generateJobID() int {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	im.jobIDCounter++
+	return im.jobIDCounter
+}
+
+func (im *InventoryManager) AddStock(productId string, quantity int) error {
+	//submit job
+	job := Job{
+		ID: im.generateJobID(),
+		Task: &AddStockTask{
+			ProductId: productId,
+			Quantity:  quantity,
+			Inventory: im.inventory,
+		},
+	}
+
+	return im.WorkerPool.SubmitJob(job)
+}
+
+func (im *InventoryManager) RemoveStock(productId string, quantity int) error {
+	// submit job
+	job := Job{
+		ID: im.generateJobID(),
+		Task: &RemoveStockTask{
+			ProductId: productId,
+			Quantity:  quantity,
+			Inventory: im.inventory,
+		},
+	}
+
+	return im.WorkerPool.SubmitJob(job)
+}
+
+// check stock has to return the current quantity of a productId
+func (im *InventoryManager) CheckStock(productId string) (int, error) {
+	// submit job
+	job := Job{
+		ID: im.generateJobID(),
+		Task: &CheckStockTask{
+			ProductId: productId,
+			Inventory: im.inventory,
+		},
+	}
+
+	err := im.WorkerPool.SubmitJob(job)
+	if err != nil {
+		return 0, err
+	}
+
+	//Wait for result because we want to return the quantity here itslef
+	result := <-im.WorkerPool.ResultsChannel
+	if result.Err != nil {
+		return 0, result.Err
+	}
+
+	return result.Output.(int), nil
 }
 
 type Inventory struct {
@@ -195,7 +404,7 @@ type Inventory struct {
 type CartService struct {
 	carts            map[string]*Cart //maintains list of carts for different users (user_id, Cart object)
 	productService   *ProductService
-	inventoryService *InventoryService
+	inventoryService *InventoryManager
 }
 
 func (s *CartService) AddToCart(userId, itemId string, quantity int) error {
@@ -260,7 +469,7 @@ type OrderService struct {
 	productService   *ProductService
 	userService      *UserService
 	paymentService   PaymentGateway //interface for multiple payment types
-	inventoryService *InventoryService
+	inventoryService *InventoryManager
 	cartService      *CartService
 	shippingService  *ShippingService
 	orders           map[string]*Order //[order_id, Order object] //in real life it will be repo which will store in db
@@ -387,7 +596,7 @@ func (s *OrderService) PlaceOrder(userId string, cartId string, addressId string
 	//          Payment succeeds
 	//          Inventory: 50 → 48 (reduce by 2)
 	for _, orderItem := range orderItems {
-		err := s.inventoryService.RemoveStock(orderItem.ProductId, orderItem.Quantity)
+		// err := s.inventoryService.RemoveStock(orderItem.ProductId, orderItem.Quantity)
 		if err != nil {
 			// TODO: ROLLBACK needed here!
 			// Payment succeeded but inventory update failed
@@ -693,99 +902,87 @@ type Payment struct {
 	Timestamp     time.Time
 }
 
-func testHighLoadWithoutWorkerPool() {
-	//create inventory service
-	inventoryService := &InventoryService{
-		inventory: &Inventory{
-			Stock: make(map[string]int),
-		},
-	}
+// func testHighLoadWithoutWorkerPool() {
+// 	//create inventory service
+// 	inventoryService := &InventoryService{
+// 		inventory: &Inventory{
+// 			Stock: make(map[string]int),
+// 		},
+// 	}
 
-	//Initialise some stock
-	inventoryService.AddStock("laptop", 100000)
+// 	//Initialise some stock
+// 	inventoryService.AddStock("laptop", 100000)
 
-	// Print memory before
-	printMemoryUsage("Before spawning goroutines")
-	start := time.Now() // ← Time it
+// 	// Print memory before
+// 	printMemoryUsage("Before spawning goroutines")
+// 	start := time.Now() // ← Time it
 
-	var wg sync.WaitGroup
+// 	var wg sync.WaitGroup
 
-	//spawn 10000 goroutines
-	for i := 0; i < 10000; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+// 	//spawn 10000 goroutines
+// 	for i := 0; i < 10000; i++ {
+// 		wg.Add(1)
+// 		go func() {
+// 			defer wg.Done()
 
-			for j := 0; j < 10; j++ { //<- Each goroutine does 10 ops
-				inventoryService.RemoveStock("laptop", 1)
-				time.Sleep(1 * time.Millisecond)
-			}
-		}()
+// 			for j := 0; j < 10; j++ { //<- Each goroutine does 10 ops
+// 				inventoryService.RemoveStock("laptop", 1)
+// 				time.Sleep(1 * time.Millisecond)
+// 			}
+// 		}()
 
-		// go inventoryService.RemoveStock("laptop", 1)
-	}
-	// Print memory DURING goroutines
-	time.Sleep(50 * time.Millisecond) // Let them start
-	printMemoryUsage("After spawning goroutines")
+// 		// go inventoryService.RemoveStock("laptop", 1)
+// 	}
+// 	// Print memory DURING goroutines
+// 	time.Sleep(50 * time.Millisecond) // Let them start
+// 	printMemoryUsage("After spawning goroutines")
 
-	wg.Wait() //Wait for all goroutines to finish
+// 	wg.Wait() //Wait for all goroutines to finish
 
-	elapsed := time.Since(start)
+// 	elapsed := time.Since(start)
 
-	// Print memory after
-	printMemoryUsage("After all goroutines finished")
+// 	// Print memory after
+// 	printMemoryUsage("After all goroutines finished")
 
-	// Check final stock
-	stock, _ := inventoryService.CheckStock("laptop")
-	fmt.Printf("\nFinal stock: %d (Expected: 0)\n", stock)
-	fmt.Printf("Time taken: %v\n", elapsed)
-}
+// 	// Check final stock
+// 	stock, _ := inventoryService.CheckStock("laptop")
+// 	fmt.Printf("\nFinal stock: %d (Expected: 0)\n", stock)
+// 	fmt.Printf("Time taken: %v\n", elapsed)
+// }
 
 func testHighLoadWithWorkerPool() {
-	//create inventory service
-	inventoryService := &InventoryService{
-		inventory: &Inventory{
-			Stock: make(map[string]int),
-		},
-	}
 
 	//Initialise some stock
-	inventoryService.AddStock("laptop", 100000)
+	// inventoryService.WorkerPoolAddStock("laptop", 100000)
 
 	// Print memory before
-	printMemoryUsage("Before spawning goroutines")
+	printMemoryUsage("Before spawning workerpool")
 	start := time.Now() // ← Time it
 
-	var wg sync.WaitGroup
-
-	//spawn 10000 goroutines
-	for i := 0; i < 10000; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			for j := 0; j < 10; j++ { //<- Each goroutine does 10 ops
-				inventoryService.RemoveStock("laptop", 1)
-				time.Sleep(1 * time.Millisecond)
-			}
-		}()
-
-		// go inventoryService.RemoveStock("laptop", 1)
+	//start worker pool
+	inventoryManager := NewInventoryManager(10, 100)
+	err := inventoryManager.AddStock("laptop", 1)
+	if err != nil {
+		fmt.Printf("err ", err)
 	}
-	// Print memory DURING goroutines
-	time.Sleep(50 * time.Millisecond) // Let them start
-	printMemoryUsage("After spawning goroutines")
+	quantity, err := inventoryManager.CheckStock("laptop")
+	if err != nil {
+		fmt.Printf("err ", err)
+	}
 
-	wg.Wait() //Wait for all goroutines to finish
+	if quantity > 1 {
+		err = inventoryManager.RemoveStock("laptop", 1)
+		if err != nil {
+			fmt.Printf("err ", err)
+		}
+	}
 
 	elapsed := time.Since(start)
 
 	// Print memory after
-	printMemoryUsage("After all goroutines finished")
+	printMemoryUsage("After all worker pools finished")
 
 	// Check final stock
-	stock, _ := inventoryService.CheckStock("laptop")
-	fmt.Printf("\nFinal stock: %d (Expected: 0)\n", stock)
 	fmt.Printf("Time taken: %v\n", elapsed)
 }
 
@@ -797,7 +994,7 @@ func printMemoryUsage(label string) {
 
 func main() {
 	//simulate 100000 inventory operations
-	testHighLoadWithoutWorkerPool()
+	// testHighLoadWithoutWorkerPool()
 
 	//simulate 100000 inventory operations
 	testHighLoadWithWorkerPool()

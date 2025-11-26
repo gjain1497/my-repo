@@ -62,7 +62,9 @@ type ArkoseAPI interface {
 }
 
 // Real implementation
-type ArkoseService struct { cfg Config }
+type ArkoseService struct { 
+    cfg Config 
+}
 func (a *ArkoseService) IsValidationEnabled() bool { ... }
 
 // Mock implementation (for testing)
@@ -71,7 +73,7 @@ func (m *MockArkoseInterface) IsValidationEnabled() bool { ... }
 
 // Handler uses interface (can swap real/mock)
 type Handler struct {
-    arkose ArkoseService  // Real in prod, mock in tests
+    arkose ArkoseAPI  // ArkoseService in prod, mock in tests
 }
 ```
 

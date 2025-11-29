@@ -1,0 +1,647 @@
+Question
+
+In production, we have these table corresponding to our maps. So, would we first fetch all the vehicles, and then filter the vehicles just to maintain SRP? Or we should use joins because this would be faster. And if Join then which service should do that
+
+vehicles
+
+id name model ......
+
+booking
+
+id, vehicle_id(), start_date, end_date
+
+
+Excellent question bro! 🔥 This is real-world thinking!
+
+🤔 The Trade-off:
+ApproachSRPPerformanceFetch all → Filter in code✅ Clean❌ Slow (N+1 queries)SQL Join⚠️ Questionable✅ Fast
+
+💡 Real-World Answer:
+In production, we use JOINs for performance. But the question is: WHERE does that query live?
+
+🎯 Solution: Repository Pattern
+Services don't talk to DB directly. Repositories do!
+┌─────────────────┐     ┌──────────────────┐
+│ VehicleService  │     │  BookingService  │
+└────────┬────────┘     └────────┬─────────┘
+         │                       │
+         │    (Business Logic)   │
+         │                       │
+┌────────▼────────┐     ┌────────▼─────────┐
+│VehicleRepository│     │BookingRepository │
+└────────┬────────┘     └────────┬─────────┘
+         │                       │
+         └───────────┬───────────┘
+                     │
+              ┌──────▼──────┐
+              │   Database  │
+              └─────────────┘
+
+✅ Where Does JOIN Query Live?
+Option 1: VehicleRepository ✅ (Preferred)
+gotype VehicleRepositoryInterface interface {
+    GetAllVehicles() ([]*Vehicle, error)
+    GetVehicleById(id string) (*Vehicle, error)
+    GetAvailableVehicles(locationId string, vehicleType VehicleType, startDate, endDate time.Time) ([]*Vehicle, error)  // ✅ JOIN here!
+}
+
+type VehicleRepository struct {
+    db *sql.DB
+}
+
+func (r *VehicleRepository) GetAvailableVehicles(locationId string, vehicleType VehicleType, startDate, endDate time.Time) ([]*Vehicle, error) {
+    query := `
+        SELECT v.* FROM vehicles v
+        WHERE v.location_id = $1 
+        AND v.type = $2
+        AND v.id NOT IN (
+            SELECT b.vehicle_id FROM bookings b
+            WHERE b.status = 'CONFIRMED'
+            AND b.start_date < $4 
+            AND b.end_date > $3
+        )
+    `
+    // Execute query...
+}
+```
+
+**Why VehicleRepository?**
+- We're **returning Vehicles** (Vehicle is the primary entity)
+- Repository is just **data access**, not business logic
+- SRP at **service level** is maintained!
+
+---
+
+## 🎯 **Updated Architecture:**
+```
+┌──────────────────────────────────────────────────┐
+│                 Service Layer                     │
+│    (Business Logic - SRP Maintained Here!)       │
+├─────────────────┬────────────────────────────────┤
+│ VehicleService  │  BookingService                │
+│  - AddVehicle   │   - BookVehicle                │
+│  - UpdateVehicle│   - CancelBooking              │
+│  - ListAvailable│   - ReturnVehicle              │
+└────────┬────────┴───────────────┬────────────────┘
+         │                        │
+┌────────▼────────────────────────▼────────────────┐
+│              Repository Layer                     │
+│         (Data Access - JOINs OK here!)           │
+├─────────────────┬────────────────────────────────┤
+│VehicleRepository│  BookingRepository             │
+│ - GetAvailable  │   - GetByUserId                │
+│   (with JOIN!)  │   - Create                     │
+└────────┬────────┴───────────────┬────────────────┘
+         │                        │
+         └───────────┬────────────┘
+                     │
+              ┌──────▼──────┐
+              │   Database  │
+              └─────────────┘
+
+🔑 Key Insight:
+LayerResponsibilityJOINs OK?ServiceBusiness logic❌ No DB knowledgeRepositoryData access✅ Yes! JOINs, complex queries
+SRP is maintained at SERVICE level. Repository is allowed to do complex queries for performance!
+
+
+
+Question
+
+VehicleService{
+    map[string][]Booking ()
+}
+
+SO If I am doing this at LLD level only not prod. SHould I create this map, because it kind of represents what this function is doing
+
+func (r *VehicleRepository) GetAvailableVehicles(locationId string, vehicleType VehicleType, startDate, endDate time.Time) ([]*Vehicle, error) {
+
+or should we prefer that method which you told earlier (fetch all (vehicle service). + filter(booking service))
+
+
+Answer
+
+Great question bro! 🔥
+
+🤔 Let's Analyze Both:
+Option A: Add Bookings map in VehicleService
+gotype VehicleService struct {
+    Vehicles map[string]*Vehicle
+    Bookings map[string][]*Booking  // vehicleId → []Booking
+}
+❌ Problem: Now VehicleService is storing booking data
+→ Violates SRP (VehicleService managing bookings)
+→ Data duplication (BookingService also has bookings)
+→ Sync issues (which is source of truth?)
+
+Option B: Orchestrator fetches + filters
+go// Controller/API layer
+func SearchAvailableVehicles(...) {
+    vehicles := vehicleService.ListByType(...)
+    for _, v := range vehicles {
+        if bookingService.IsVehicleAvailable(v.Id, startDate, endDate) {
+            // add to result
+        }
+    }
+}
+✅ Clean separation
+✅ No data duplication
+✅ SRP maintained
+
+🎯 For LLD Level:
+Use Option B (Orchestrator approach)
+go// VehicleService - just lists vehicles
+func (s *VehicleService) ListVehiclesByType(vehicleType VehicleType) ([]*Vehicle, error)
+
+// BookingService - checks availability
+func (s *BookingService) IsVehicleAvailable(vehicleId string, startDate, endDate time.Time) bool
+
+// Orchestrator combines both
+func SearchAvailableVehicles(...) []*Vehicle
+
+💡 Why?
+ConcernAnswerSRP✅ Each service has single responsibilityData duplication✅ NoneLLD interview✅ Shows clean design thinkingPerformance⚠️ Mention "In production, we'd use Repository with JOINs"
+
+
+Question
+I mean why do we prefer option b for prod , isn't it also violating these
+❌ Problem: Now VehicleService is storing booking data
+→ Violates SRP (VehicleService managing bookings)
+→ Data duplication (BookingService also has bookings)
+→ Sync issues (which is source of truth?)
+
+Or is it because we use database
+
+
+Answer
+💡 Why Option B (JOIN) is OK in Production:
+Database = Single Source of Truth
+┌─────────────────────────────────────┐
+│            DATABASE                 │
+├─────────────────┬───────────────────┤
+│ vehicles table  │  bookings table   │
+│ (single source) │  (single source)  │
+└─────────────────┴───────────────────┘
+          │                │
+          └───────┬────────┘
+                  │
+           ┌──────▼──────┐
+           │    JOIN     │  ← Just READING from both
+           └─────────────┘
+JOIN doesn't duplicate data - it just reads from both tables in one query!
+
+❌ Why Option A (Map in Service) is BAD:
+┌─────────────────────────────────────┐
+│          IN-MEMORY                  │
+├─────────────────┬───────────────────┤
+│ VehicleService  │  BookingService   │
+│ - Vehicles map  │  - Bookings map   │
+│ - Bookings map  │  ← DUPLICATE!     │
+│   (copy!)       │                   │
+└─────────────────┴───────────────────┘
+Two copies of same data → Sync issues!
+
+🎯 The Key Difference:
+ApproachData StorageProblem?LLD (in-memory maps)Each service has its OWN mapAdding Bookings map to VehicleService = duplicationProduction (database)ONE database, services just readJOIN = reading from single source, no duplication
+
+✅ Summary:
+LevelApproachWhyLLD (maps)Orchestrator (fetch + filter)Avoid data duplication in memoryProduction (DB)Repository with JOINSingle source of truth (DB), JOIN just reads
+
+So for your current LLD code → Use Orchestrator approach!
+
+
+Question
+If we have already hanbdled this logic in LIstVehicles, Do we need to double check avaialbility again in BookVehicle?
+
+
+Answer
+Great question bro! 🔥
+
+---
+
+## 🎯 **Short Answer: YES, we still need to check in BookVehicle!**
+
+---
+
+## 🤔 **Why?**
+
+**Race Condition between ListVehicles and BookVehicle:**
+
+```
+Timeline:
+─────────────────────────────────────────────────────────►
+
+User A                          User B
+   │                               │
+   ├─ ListVehicles()               │
+   │  → Vehicle V1 available ✅    │
+   │                               ├─ ListVehicles()
+   │                               │  → Vehicle V1 available ✅
+   │                               │
+   │                               ├─ BookVehicle(V1) ✅
+   │                               │  → V1 BOOKED!
+   │                               │
+   ├─ BookVehicle(V1)              │
+   │  → ??? 💥                     │
+   │                               │
+```
+
+**If we don't check in BookVehicle:**
+- User A saw V1 available in list
+- User B booked V1 in between
+- User A's booking succeeds for already booked vehicle! ❌
+
+---
+
+## ✅ **Correct Flow:**
+
+```
+ListVehicles() → Shows available vehicles (for UI/display)
+                 ↓
+BookVehicle()  → Re-checks availability (for actual booking)
+                 ↓
+              Double-check under LOCK before confirming
+```
+
+---
+
+## 💡 **One-liner:**
+
+> **ListVehicles = Optimistic check (for display)**
+> 
+> **BookVehicle = Pessimistic check (for actual transaction)**
+
+---
+
+## 📝 **Real-world Analogy:**
+
+| Step | Example | Check Type |
+|------|---------|------------|
+| ListVehicles | Showing "5 seats available" on BookMyShow | Optimistic (can change) |
+| BookVehicle | Actually booking the seat | Pessimistic (re-verify under lock) |
+
+---
+
+**So YES, keep the double-check in BookVehicle!** ✅
+
+
+Question
+But isn't here repository breaking SRP? Just like our service was breaking SRP when we put map of map[vehicle_id][]Booking
+
+Excellent question bro! 🔥 You're thinking deep!
+
+🤔 Let's Compare:
+Service with Map (BAD):
+
+type VehicleService struct {
+    Vehicles map[string]*Vehicle
+    Bookings map[string][]*Booking  // ❌ STORING booking data
+}
+
+VehicleService OWNS/MANAGES booking data
+Two sources of truth (VehicleService + BookingService both have bookings)
+Has to maintain, update, sync this data
+
+
+Repository with JOIN (OK):
+func (r *VehicleRepository) GetAvailableVehicles(...) {
+    query := `
+        SELECT v.* FROM vehicles v
+        WHERE v.id NOT IN (
+            SELECT b.vehicle_id FROM bookings b
+            WHERE ...
+        )
+    `
+}
+```
+- Repository **READS** booking data (doesn't own it)
+- Single source of truth (database)
+- No maintenance, no sync issues
+
+---
+
+## 🎯 **The Key Difference:**
+
+| Aspect | Service with Map | Repository with JOIN |
+|--------|------------------|---------------------|
+| Data ownership | ❌ Owns/stores booking data | ✅ Just reads |
+| Source of truth | ❌ Multiple (duplication) | ✅ Single (database) |
+| Sync needed | ❌ Yes | ✅ No |
+| SRP violation | ❌ Yes (managing bookings) | ⚠️ Debatable |
+
+---
+
+## 💡 **Is Repository Breaking SRP?**
+
+**Technically YES, but it's an ACCEPTED trade-off:**
+
+### **Purist View:**
+```
+VehicleRepository → Only touch vehicles table
+BookingRepository → Only touch bookings table
+```
+❌ Performance nightmare (N+1 queries)
+
+### **Pragmatic View:**
+```
+Repository = Data Access Layer
+Its responsibility = "Fetch data efficiently from database"
+JOINs are part of "efficient data fetching"
+```
+✅ Accepted in real-world
+
+---
+
+## 🎯 **The Real SRP Boundary:**
+```
+┌─────────────────────────────────────────────┐
+│              Service Layer                  │
+│  SRP STRICTLY ENFORCED HERE                 │
+│  (VehicleService doesn't know about         │
+│   BookingService internals)                 │
+└─────────────────────────────────────────────┘
+                    │
+┌─────────────────────────────────────────────┐
+│            Repository Layer                 │
+│  SRP RELAXED for performance                │
+│  (Can read from multiple tables)            │
+│  BUT still returns only ONE entity type     │
+└─────────────────────────────────────────────┘
+                    │
+┌─────────────────────────────────────────────┐
+│              Database                       │
+│  Single source of truth                     │
+└─────────────────────────────────────────────┘
+
+📝 Interview Answer:
+
+"Repository JOINing multiple tables is an accepted trade-off for performance. The key is:
+
+Repository only reads from other tables, doesn't own/manage them
+Repository returns one entity type (Vehicles, not Vehicles+Bookings)
+SRP is strictly maintained at service layer
+Database remains single source of truth"
+
+
+
+✅ Summary:
+LayerSRP StrictnessWhyService🔒 StrictBusiness logic must be cleanRepository🔓 RelaxedPerformance > Purity for data accessDatabaseN/AJust storage
+
+Makes sense now bro? 🚀
+
+Question
+But vehicle service cannot fetch booking data, it can only fetch vehicle data right
+
+Answer
+Yes bro! Exactly! 💯
+
+---
+
+## 🎯 **The Rule:**
+
+| Layer | What it can access |
+|-------|-------------------|
+| VehicleService | VehicleRepository only |
+| BookingService | BookingRepository only |
+| VehicleRepository | vehicles table (+ JOINs for reading) |
+| BookingRepository | bookings table (+ JOINs for reading) |
+
+---
+
+## 🤔 **So How Does It Work?**
+
+```
+VehicleService
+      │
+      ▼
+VehicleRepository.GetAvailableVehicles()
+      │
+      ▼
+Database (JOIN vehicles + bookings)
+      │
+      ▼
+Returns []*Vehicle (only vehicle data!)
+```
+
+**VehicleService doesn't know about bookings!**
+
+It just calls:
+```go
+vehicleRepo.GetAvailableVehicles(location, type, startDate, endDate)
+```
+
+**VehicleRepository handles the JOIN internally** and returns only `[]*Vehicle`
+
+---
+
+## 💡 **The Abstraction:**
+
+```go
+// VehicleService doesn't know HOW availability is checked
+// It just asks repository for "available vehicles"
+
+func (s *VehicleService) ListAvailableVehicles(locationId string, vehicleType VehicleType, startDate, endDate time.Time) ([]*Vehicle, error) {
+    return s.vehicleRepo.GetAvailableVehicles(locationId, vehicleType, startDate, endDate)
+}
+
+// Repository hides the JOIN complexity
+func (r *VehicleRepository) GetAvailableVehicles(...) ([]*Vehicle, error) {
+    // JOIN happens here, but service doesn't know!
+    query := `SELECT v.* FROM vehicles v WHERE ... NOT IN (SELECT from bookings)`
+    // Returns only Vehicle objects
+}
+```
+
+---
+
+## ✅ **So:**
+
+| Question | Answer |
+|----------|--------|
+| Does VehicleService access booking data? | ❌ No |
+| Does VehicleService know about bookings table? | ❌ No |
+| Does VehicleRepository read from bookings table? | ✅ Yes (for filtering) |
+| Does VehicleRepository return booking data? | ❌ No (only vehicles) |
+
+---
+
+## 📝 **One-liner:**
+
+> **Service knows WHAT data it needs, Repository knows HOW to get it.**
+
+VehicleService says: *"Give me available vehicles"*
+
+VehicleRepository figures out: *"I'll JOIN with bookings to filter"*
+
+-------------------------------------------------------------------------
+
+
+
+# LLD & SOLID Principles - Where They Apply
+
+## 🎯 Key Insight: LLD = Service Layer Design
+
+When interviewer asks **"Design a system"**, they're asking:
+
+> **"Design the Service Layer"**
+
+---
+
+## 📊 Layer-wise Analysis
+
+### SRP (Single Responsibility Principle) by Layer:
+
+| Layer | SRP Strict? | Why |
+|-------|-------------|-----|
+| **Handler/Controller** | ⚠️ Relaxed | Can call multiple services (orchestration is its job) |
+| **Service** | 🔒 **Strict** | Core business logic, one responsibility per service |
+| **Repository** | ⚠️ Relaxed | Can JOIN multiple tables for performance |
+| **Database** | N/A | Just storage |
+
+---
+
+## 🏗️ Architecture Overview
+
+```
+┌─────────────────────────────────────────────┐
+│           Handler/Controller                │
+│  Focus: Request/Response, Validation        │
+│  Principles: Clean Code, Error Handling     │
+│  SRP: Relaxed (can call multiple services)  │
+└─────────────────────────────────────────────┘
+                    │
+┌─────────────────────────────────────────────┐
+│              Service Layer                  │
+│  Focus: Business Logic                      │
+│  Principles: SOLID, Design Patterns, LLD   │
+│  SRP: STRICT 🔒                             │
+│  🔥 THIS IS WHERE LLD LIVES!                │
+└─────────────────────────────────────────────┘
+                    │
+┌─────────────────────────────────────────────┐
+│              Repository Layer               │
+│  Focus: Data Access, Performance            │
+│  Principles: Query Optimization, Caching    │
+│  SRP: Relaxed (can JOIN multiple tables)    │
+└─────────────────────────────────────────────┘
+                    │
+┌─────────────────────────────────────────────┐
+│              Database                       │
+│  Single source of truth                     │
+└─────────────────────────────────────────────┘
+```
+
+---
+
+## 🎯 Where SOLID Principles Apply
+
+| Principle | Primary Layer | Example |
+|-----------|---------------|---------|
+| **S** - Single Responsibility | Service | VehicleService ≠ BookingService |
+| **O** - Open/Closed | Service | Strategy pattern for pricing |
+| **L** - Liskov Substitution | Service | StripeGateway / RazorpayGateway interchangeable |
+| **I** - Interface Segregation | Service | Small focused interfaces |
+| **D** - Dependency Inversion | Service | Depend on interfaces, not concrete types |
+
+---
+
+## 🤔 Why Repository Can Break SRP?
+
+### Service with Map (❌ BAD):
+```go
+type VehicleService struct {
+    Vehicles map[string]*Vehicle
+    Bookings map[string][]*Booking  // ❌ STORING booking data
+}
+```
+- VehicleService **OWNS/MANAGES** booking data
+- Two sources of truth (duplication)
+- Has to **maintain, update, sync** this data
+
+### Repository with JOIN (✅ OK):
+```go
+func (r *VehicleRepository) GetAvailableVehicles(...) {
+    query := `
+        SELECT v.* FROM vehicles v
+        WHERE v.id NOT IN (
+            SELECT b.vehicle_id FROM bookings b WHERE ...
+        )
+    `
+}
+```
+- Repository **READS** booking data (doesn't own it)
+- Single source of truth (database)
+- No maintenance, no sync issues
+
+### Key Difference:
+
+| Aspect | Service with Map | Repository with JOIN |
+|--------|------------------|---------------------|
+| Data ownership | ❌ Owns/stores data | ✅ Just reads |
+| Source of truth | ❌ Multiple (duplication) | ✅ Single (database) |
+| Sync needed | ❌ Yes | ✅ No |
+| SRP violation | ❌ Yes | ⚠️ Accepted trade-off |
+
+---
+
+## 💡 The Abstraction
+
+```go
+// VehicleService doesn't know HOW availability is checked
+// It just asks repository for "available vehicles"
+
+func (s *VehicleService) ListAvailableVehicles(...) ([]*Vehicle, error) {
+    return s.vehicleRepo.GetAvailableVehicles(locationId, vehicleType, startDate, endDate)
+}
+
+// Repository hides the JOIN complexity
+func (r *VehicleRepository) GetAvailableVehicles(...) ([]*Vehicle, error) {
+    // JOIN happens here, but service doesn't know!
+    query := `SELECT v.* FROM vehicles v WHERE ... NOT IN (SELECT from bookings)`
+    // Returns only Vehicle objects
+}
+```
+
+### The Rule:
+
+| Question | Answer |
+|----------|--------|
+| Does VehicleService access booking data? | ❌ No |
+| Does VehicleService know about bookings table? | ❌ No |
+| Does VehicleRepository read from bookings table? | ✅ Yes (for filtering) |
+| Does VehicleRepository return booking data? | ❌ No (only vehicles) |
+
+---
+
+## 📝 Interview Mental Model
+
+| Term | Means |
+|------|-------|
+| LLD | Service Layer Design |
+| SOLID | Service Layer Principles |
+| Design Patterns | Service Layer Patterns |
+| "Design X System" | "Design X Service Layer" |
+
+---
+
+## ✅ One-liners for Interview
+
+### On SRP across layers:
+> "SRP is **strictly enforced at Service layer** because that's where business logic lives. Handler orchestrates multiple services, Repository optimizes data access - both have relaxed SRP for practical reasons."
+
+### On Repository JOINs:
+> "Repository JOINing multiple tables is an accepted trade-off for performance. Repository only **reads** from other tables, doesn't own/manage them. It returns **one entity type**. SRP is strictly maintained at **service layer**. Database remains **single source of truth**."
+
+### On LLD:
+> "LLD Interview = Design the Service Layer following SOLID principles"
+
+---
+
+## 🎯 Summary
+
+```
+Handler  → Orchestration      (relaxed SRP)
+Service  → Business Logic     (STRICT SRP) 🔒  ← LLD LIVES HERE!
+Repository → Data Access      (relaxed SRP)
+```
+
+**When we talk about LLD/SOLID, we're talking about the Service Layer!**

@@ -169,8 +169,6 @@ func (c *TruckVehicle) CalculateLateFeePerDay() (float64, error) {
 type VehicleServiceInterface interface {
 	ListVehicles(userId string, locationId string, vehicleType VehicleType, dateStart time.Time, dateEnd time.Time) ([]*Vehicle, error)
 	ListVehiclesCurrentlyAssignedToAUser(userId string) []*Vehicle
-	BookVehicle(userId string, vehicleId string) error
-	UnBookVehicle(userId string, vehicleId string) error
 	CalculateEstimatedPrice(userId string, vehicleId string, dateStart time.Time, dateEnd time.Time) (float64, error)
 	CalculateNetPriceAfteReturn(userId string, vehicleId string, dateStart time.Time, dateEnd time.Time, actualDateEnd time.Time) (float64, error)
 	GetVehicle(vehicleId string) (*Vehicle, error)
@@ -185,6 +183,47 @@ type VehicleService struct {
 	Locations       map[string]*Location  // ✅ Store locations
 	StrategyFactory *PricingStrategyFactory
 	mu              sync.RWMutex
+}
+
+//Now the thing is list vehicle should list the vehicles
+// that are only avaialble within those dates which user have
+//selected. But to check if the avaialbility of vehicle(i.e if
+//the vehcile is booked within that dates), we have to call
+//booking service which will lead to circular dependancy.
+
+//So actually this should be the real flow rather
+//Step 1: Get all vehicles (VehicleService)
+//Step 2: Filter by availability for those dates (BookingService)
+
+// | Question | Answer | Owner |
+// |----------|--------|-------|
+// | What vehicles exist? | VehicleService | ✅ |
+// | What bookings exist? | BookingService | ✅ |
+// | Is vehicle available for dates? | BookingService | ✅ (because it needs booking data) |
+
+//So the handler decides this rather than service deciding this
+
+// At API/Controller layer (or a SearchService)
+
+// At production how will this happen, refer to
+// book_and_search_vehicle.readme file for more details
+func SearchAvailableVehicles(locationId string, vehicleType VehicleType, startDate, endDate time.Time) ([]*Vehicle, error) {
+
+	// 1. Get all vehicles of this type from VehicleService
+	allVehicles, err := vehicleService.ListVehiclesByType(locationId, vehicleType)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Filter by availability using BookingService
+	var availableVehicles []*Vehicle
+	for _, vehicle := range allVehicles {
+		if bookingService.IsVehicleAvailable(vehicle.Id, startDate, endDate) {
+			availableVehicles = append(availableVehicles, vehicle)
+		}
+	}
+
+	return availableVehicles, nil
 }
 
 func (s *VehicleService) ListVehicles(userId string, locationId string, vehicleType VehicleType, dateStart time.Time, dateEnd time.Time) ([]*Vehicle, error) {
@@ -208,44 +247,46 @@ func (s *VehicleService) ListVehiclesCurrentlyAssignedToAUser(userId string) []*
 	return s.UserVehicles[userId]
 }
 
-func (s *VehicleService) BookVehicle(userId string, vehicleId string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+//Not required as we are handling this logic in booking class itself by checking the booking status
 
-	vehicle, ok := s.Vehicles[vehicleId]
-	if !ok {
-		return errors.New("Vehicle not found")
-	}
+// func (s *VehicleService) BookVehicle(userId string, vehicleId string) error {
+// 	s.mu.Lock()
+// 	defer s.mu.Unlock()
 
-	vehicle.IsAvailable = false
-	s.UserVehicles[userId] = append(s.UserVehicles[userId], vehicle)
-	return nil
-}
+// 	vehicle, ok := s.Vehicles[vehicleId]
+// 	if !ok {
+// 		return errors.New("Vehicle not found")
+// 	}
 
-func (s *VehicleService) UnBookVehicle(userId string, vehicleId string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// 	vehicle.IsAvailable = false
+// 	s.UserVehicles[userId] = append(s.UserVehicles[userId], vehicle)
+// 	return nil
+// }
 
-	vehicle, ok := s.Vehicles[vehicleId]
-	if !ok {
-		return errors.New("Vehicle not found")
-	}
+// func (s *VehicleService) UnBookVehicle(userId string, vehicleId string) error {
+// 	s.mu.Lock()
+// 	defer s.mu.Unlock()
 
-	// ✅ VehicleService's responsibility: manage vehicle availability
-	vehicle.IsAvailable = true
+// 	vehicle, ok := s.Vehicles[vehicleId]
+// 	if !ok {
+// 		return errors.New("Vehicle not found")
+// 	}
 
-	// ✅ VehicleService's responsibility: manage user-vehicle mapping
-	// This maintains data consistency within VehicleService's domain
-	currentVehicles := s.ListVehiclesCurrentlyAssignedToAUser(userId)
-	for i, vehicle := range currentVehicles {
-		if vehicle.Id == vehicleId {
-			currentVehicles = append(currentVehicles[:i], currentVehicles[i+1:]...)
-			break
-		}
-	}
-	s.UserVehicles[userId] = currentVehicles
-	return nil
-}
+// 	// ✅ VehicleService's responsibility: manage vehicle availability
+// 	vehicle.IsAvailable = true
+
+// 	// ✅ VehicleService's responsibility: manage user-vehicle mapping
+// 	// This maintains data consistency within VehicleService's domain
+// 	currentVehicles := s.ListVehiclesCurrentlyAssignedToAUser(userId)
+// 	for i, vehicle := range currentVehicles {
+// 		if vehicle.Id == vehicleId {
+// 			currentVehicles = append(currentVehicles[:i], currentVehicles[i+1:]...)
+// 			break
+// 		}
+// 	}
+// 	s.UserVehicles[userId] = currentVehicles
+// 	return nil
+// }
 
 func (s *VehicleService) CalculateEstimatedPrice(userId string, vehicleId string, dateStart time.Time, dateEnd time.Time) (float64, error) {
 	//anyone can check no need of verifying that user is admin only
@@ -499,10 +540,8 @@ func (s *PaymentService) ProcessPayment(bookingId string, amount float64, paymen
 		return nil, errors.New("invalid amount")
 	}
 
-	// ✅ Business logic: convert to cents
 	amountInCents := int(amount * 100)
 
-	// ✅ Business logic: generate transaction ID
 	transactionId := generateTransactionID()
 
 	// Call gateway (different method name!)
@@ -511,7 +550,6 @@ func (s *PaymentService) ProcessPayment(bookingId string, amount float64, paymen
 		return nil, err
 	}
 
-	// ✅ Business logic: convert gateway response to Payment domain model
 	payment := &Payment{
 		Id:        gatewayResp.TransactionId,
 		Type:      paymentType,
@@ -520,7 +558,6 @@ func (s *PaymentService) ProcessPayment(bookingId string, amount float64, paymen
 		CreatedAt: time.Now(),
 	}
 
-	// ✅ Business logic: store payment
 	s.mu.Lock()
 	s.Payments[payment.Id] = payment
 	s.mu.Unlock()
@@ -667,25 +704,95 @@ type BookingServiceInterface interface {
 	GetBookingDetails(bookingId string) (*Booking, error)
 	ReturnVehicle(bookingId string, vehicleId string, userId string, actualDateEnd time.Time) error
 	CancelBooking(bookingId string, vehicleId string, userId string) error
+	GetBookingsForUser(userId string) ([]*Booking, error)
 }
 type BookingService struct {
-	Bookings       map[string]*Booking     //[booking_id, Booking object]
-	PaymentService PaymentServiceInterface //we will initalise paymentService with the specific gateway that we want
-	VehicleService VehicleServiceInterface
-	mu             sync.RWMutex
+	Bookings        map[string]*Booking     //[booking_id, Booking object]
+	VehicleBookings map[string][]*Booking   //[vehicle_id, Booking object]
+	PaymentService  PaymentServiceInterface //we will initalise paymentService with the specific gateway that we want
+	VehicleService  VehicleServiceInterface
+	mu              sync.RWMutex
 }
 
+// 🤔 Why Date Check for Future Reservations?
+// Today: Jan 1
+
+// User A: "Book vehicle V1 for Jan 10-15"
+// → IsAvailable = false
+
+// User B: "Book vehicle V1 for Jan 20-25"
+// → ❌ REJECTED (IsAvailable is false)
+
+// BUT WAIT... Jan 20-25 has NO conflict with Jan 10-15!
+// Vehicle is FREE on those dates! 😤
+
+//So thats why we have to check the booking within those dates
+//and to check the bookings within those dates, we would have
+//to put it in the booking service as only booking service
+//knows about status of the bookings during those dates
+
+func (s *BookingService) hasOverlap(vehicleId string, startDate time.Time, endDate time.Time) bool {
+	//Brute force
+	// for _, booking := range s.Bookings {
+	// 	if booking.VehicleId == vehicleId && booking.Status == CONFIRMED {
+	// 		// Overlap if: newStart < existingEnd AND newEnd > existingStart
+	// 		if startDate.Before(booking.EndDate) && endDate.After(booking.StartDate) {
+	// 			return true
+	// 		}
+	// 	}
+	// }
+
+	//Eficient approach also that we can do, thats why took VehicleBookings map
+	bookings, exists := s.VehicleBookings[vehicleId]
+	if !exists {
+		return false
+	}
+	for _, booking := range bookings {
+		if booking.Status == CONFIRMED {
+			// Overlap if: newStart < existingEnd AND newEnd > existingStart
+			if startDate.Before(booking.EndDate) && endDate.After(booking.StartDate) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// Implementation
+func (s *BookingService) GetBookingsForUser(userId string) ([]*Booking, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*Booking
+	for _, booking := range s.Bookings {
+		if booking.UserId == userId {
+			result = append(result, booking)
+		}
+	}
+	return result, nil
+}
 func (s *BookingService) BookVehicle(vehicleId string, userId string, startDate time.Time, endDate time.Time, paymentType PaymentType) error {
-	//fetch vehicle details from vehicle service
 	//ShowEstimatedPrice of that vehicle
 	//payment at deposit or full amount of this estimatedPrice
 	//if payment successful
 	//book that vehicle (of course taking care of concurrency , is available = false, )
+
+	// 1. Calculate price (no lock)
 	price, err := s.VehicleService.CalculateEstimatedPrice(userId, vehicleId, startDate, endDate)
 	if err != nil {
 		return err
 	}
 
+	// 2. Check overlap (with lock)
+	s.mu.Lock()
+	if s.hasOverlap(vehicleId, startDate, endDate) {
+		s.mu.Unlock()
+		return errors.New("vehicle not available for these dates")
+	}
+	s.mu.Unlock()
+
+	// 3. Process payment (no lock - slow operation)
 	bookingId := "12332131axzddasx"
 	booking := &Booking{
 		Id:            bookingId,
@@ -702,20 +809,32 @@ func (s *BookingService) BookVehicle(vehicleId string, userId string, startDate 
 	//lets say for now only pay deposit amount
 	payment, err := s.PaymentService.ProcessPayment(bookingId, booking.DepositAmount, paymentType)
 
-	if err != nil || payment.Status == FAILED {
-		return err
-	}
-
-	booking.PaymentId = payment.Id
-	booking.Status = CONFIRMED
-
-	err = s.VehicleService.BookVehicle(userId, vehicleId)
 	if err != nil {
 		return err
 	}
+	if payment.Status == FAILED {
+		return errors.New("payment failed")
+	}
+	booking.PaymentId = payment.Id
+
+	// 4. Store booking (with lock) - check overlap AGAIN
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Re-check (someone might have booked while we were processing payment)
+	if s.hasOverlap(vehicleId, startDate, endDate) {
+		// TODO: Refund payment here
+		return errors.New("vehicle no longer available")
+	}
+
+	booking.Status = CONFIRMED
+
+	//not required now
+	// err = s.VehicleService.BookVehicle(userId, vehicleId)
+	// if err != nil {
+	// 	return err
+	// }
 	s.Bookings[bookingId] = booking
-	s.mu.Unlock()
 	return nil
 }
 
@@ -748,11 +867,11 @@ func (s *BookingService) ReturnVehicle(bookingId string, vehicleId string, userI
 		return err
 	}
 
-	//make again is available = true
-	err = s.VehicleService.UnBookVehicle(userId, vehicleId)
-	if err != nil {
-		return err
-	}
+	// //make again is available = true
+	// err = s.VehicleService.UnBookVehicle(userId, vehicleId)
+	// if err != nil {
+	// 	return err
+	// }
 
 	s.mu.Lock()
 	booking.Status = COMPLETED
@@ -772,20 +891,30 @@ func (s *BookingService) CancelBooking(bookingId string, vehicleId string, userI
 	if err != nil {
 		return err
 	}
-	if payment.Status == REFUNDED {
-		//make again is available = true
-		err = s.VehicleService.UnBookVehicle(userId, vehicleId)
-		if err != nil {
-			return err
-		}
-		s.mu.Lock()
-		booking.Status = CANCELLED
-		s.Bookings[bookingId] = booking
-		s.mu.Unlock()
-
-		return nil
+	if payment.Status != REFUNDED {
+		return errors.New("payment not refunded")
 	}
-	return errors.New("Payment not refunded")
+
+	// if payment.Status == REFUNDED {
+	// 	//make again is available = true
+	// 	err = s.VehicleService.UnBookVehicle(userId, vehicleId)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	s.mu.Lock()
+	// 	booking.Status = CANCELLED
+	// 	s.Bookings[bookingId] = booking
+	// 	s.mu.Unlock()
+
+	// 	return nil
+	// }
+	// Mark as cancelled (NO UnBookVehicle call!)
+	s.mu.Lock()
+	booking.Status = CANCELLED
+	s.Bookings[bookingId] = booking
+	s.mu.Unlock()
+
+	return nil
 }
 
 type Booking struct {

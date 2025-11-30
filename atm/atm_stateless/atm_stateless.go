@@ -81,6 +81,17 @@ type ATMServiceV1 struct {
 	ReceiptService     ReceiptService
 }
 
+func NewATMServiceV1(atm *ATM, txnServ TransactionService, bankServ BankService, acctServ AccountService, cardServ CardService, receiptServ ReceiptService) (*ATMServiceV1, error) {
+	return &ATMServiceV1{
+		ATM:                atm,
+		TransactionService: txnServ,
+		BankService:        bankServ,
+		AccountService:     acctServ,
+		CardService:        cardServ,
+		ReceiptService:     receiptServ,
+	}, nil
+}
+
 func (s *ATMServiceV1) depositCash(amount float64, denominationsComing map[float64]int) error {
 	// 19200 / 500
 	originalAmount := amount
@@ -275,7 +286,7 @@ func (s *ATMServiceV1) CheckBalance(cardNumber, pin string) (float64, error) {
 type ATM struct {
 	Id            string
 	BankId        string
-	Location      Location
+	Location      *Location
 	CurrBalance   float64
 	CashInventory map[float64]int //(denomination-> count) (500->5), (200->3), (100->23)
 }
@@ -290,6 +301,13 @@ type AccountService interface {
 type AccountServiceV1 struct {
 	accounts map[string]*Account //(account_id -> account object)
 	mu       sync.RWMutex
+}
+
+// constructor
+func NewAccountServiceV1() (*AccountServiceV1, error) {
+	return &AccountServiceV1{
+		accounts: make(map[string]*Account),
+	}, nil
 }
 
 func (s *AccountServiceV1) GetAccount(accountId string) (*Account, error) {
@@ -390,6 +408,12 @@ type CardServiceV1 struct {
 	mu    sync.RWMutex
 }
 
+func NewCardServiceV1() (*CardServiceV1, error) {
+	return &CardServiceV1{
+		Cards: make(map[string]*Card),
+	}, nil
+}
+
 func (s *CardServiceV1) ValidateCard(cardNumber string) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -470,6 +494,12 @@ type TransactionServiceV1 struct {
 	mu                  sync.RWMutex              // For thread safety
 }
 
+func NewTransactionServiceV1() (*TransactionServiceV1, error) {
+	return &TransactionServiceV1{
+		totalTransactions:   make(map[string]*Transaction),
+		accountTransactions: make(map[string][]*Transaction),
+	}, nil
+}
 func (s *TransactionServiceV1) CreateTransaction(accountId, atmId string, amount float64, txnType TransactionType) (*Transaction, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -545,7 +575,15 @@ type ReceiptService interface {
 type ReceiptServiceV1 struct {
 	TransactionService TransactionService
 	AccountService     AccountService
-	Receipts           map[string]Receipt //reciept_id, receipt object
+	Receipts           map[string]*Receipt //reciept_id, receipt object
+}
+
+func NewReceiptServiceV1(txnServ TransactionService, acctServ AccountService) (*ReceiptServiceV1, error) {
+	return &ReceiptServiceV1{
+		TransactionService: txnServ,
+		AccountService:     acctServ,
+		Receipts:           make(map[string]*Receipt),
+	}, nil
 }
 
 func (s *ReceiptServiceV1) GenerateReceipt(transactionId string) (*Receipt, error) {
@@ -568,7 +606,7 @@ func (s *ReceiptServiceV1) GenerateReceipt(transactionId string) (*Receipt, erro
 		Summary:       fmt.Sprintf("%s of %.2f completed", transaction.Type, transaction.Amount),
 	}
 	// 4. Store receipt (optional)
-	s.Receipts[transactionId] = *receipt
+	s.Receipts[transactionId] = receipt
 
 	return receipt, nil
 }
@@ -586,6 +624,149 @@ func generateTransactionId() string {
 	return fmt.Sprintf("TXN-%d", time.Now().UnixNano())
 }
 
+// ATM                *ATM //each ATM machine just manages one ATM
+//
+//	BankService        BankService
+//	CardService        CardService
+//	AccountService     AccountService
+//	TransactionService TransactionService
+//	ReceiptService     ReceiptService
 func main() {
+	fmt.Println("=== ATM System Starting ===\n")
 
+	// 1. Initialize all services
+	bankServ := &BankServiceV1{}
+
+	cardServ, err := NewCardServiceV1()
+	if err != nil {
+		fmt.Println("Error creating card service:", err)
+		return
+	}
+
+	accountServ, err := NewAccountServiceV1()
+	if err != nil {
+		fmt.Println("Error creating account service:", err)
+		return
+	}
+
+	transactionServ, err := NewTransactionServiceV1()
+	if err != nil {
+		fmt.Println("Error creating transaction service:", err)
+		return
+	}
+
+	receiptServ, err := NewReceiptServiceV1(transactionServ, accountServ)
+	if err != nil {
+		fmt.Println("Error creating receipt service:", err)
+		return
+	}
+
+	// 2. Create ATM with cash inventory
+	cashInv := make(map[float64]int)
+	cashInv[500] = 10 // 5,000
+	cashInv[200] = 20 // 4,000
+	cashInv[100] = 30 // 3,000
+	// Total: 12,000
+
+	atm := &ATM{
+		Id:     "ATM-001",
+		BankId: "BANK-001",
+		Location: &Location{
+			City:    "Hyderabad",
+			Street:  "Lanco Hills",
+			Pincode: "500089",
+		},
+		CurrBalance:   12000, // Sum of all denominations
+		CashInventory: cashInv,
+	}
+
+	// 3. Initialize ATM Service
+	atmServ, err := NewATMServiceV1(atm, transactionServ, bankServ, accountServ, cardServ, receiptServ)
+	if err != nil {
+		fmt.Println("Error creating ATM service:", err)
+		return
+	}
+
+	// 4. CREATE TEST DATA (CRITICAL!)
+	fmt.Println("Creating test user, account, and card...\n")
+
+	// Create test account
+	testAccount := &Account{
+		Id:          "ACC-001",
+		UserId:      "USER-001",
+		BankId:      "BANK-001",
+		CurrBalance: 50000, // Starting balance: ₹50,000
+		AccountType: Savings,
+		DailyLimit:  20000, // Daily limit: ₹20,000
+	}
+	accountServ.accounts["ACC-001"] = testAccount
+
+	// Create test card
+	testCard := &Card{
+		CardNumber: "CARD-001",
+		UserId:     "USER-001",
+		AccountId:  "ACC-001",
+		Name:       "John Doe",
+		ExpiryDate: time.Now().AddDate(2, 0, 0), // Valid for 2 years
+		Status:     Active,
+	}
+	cardServ.Cards["CARD-001"] = testCard
+
+	fmt.Println("✅ Test data created!")
+	fmt.Printf("   Card: %s\n", testCard.CardNumber)
+	fmt.Printf("   Account: %s\n", testAccount.Id)
+	fmt.Printf("   Initial Balance: ₹%.2f\n\n", testAccount.CurrBalance)
+
+	// 5. TEST DEPOSIT
+	fmt.Println("=== Testing Deposit ===")
+	depositCashInv := make(map[float64]int)
+	depositCashInv[500] = 2  // 1,000
+	depositCashInv[200] = 10 // 2,000
+	depositCashInv[100] = 30 // 3,000
+	// Total deposit: ₹6,000
+
+	err = atmServ.Deposit("CARD-001", "1234", 6000, depositCashInv)
+	if err != nil {
+		fmt.Println("❌ Error in deposit:", err)
+	} else {
+		fmt.Println("✅ Deposit successful!")
+		fmt.Printf("   Amount: ₹6,000\n")
+		fmt.Printf("   New Balance: ₹%.2f\n\n", testAccount.CurrBalance)
+	}
+
+	// 6. TEST WITHDRAW
+	fmt.Println("=== Testing Withdrawal ===")
+	err = atmServ.Withdraw("CARD-001", "1234", 5000)
+	if err != nil {
+		fmt.Println("❌ Error in withdrawal:", err)
+	} else {
+		fmt.Println("✅ Withdrawal successful!")
+		fmt.Printf("   Amount: ₹5,000\n")
+		fmt.Printf("   New Balance: ₹%.2f\n\n", testAccount.CurrBalance)
+	}
+
+	// 7. TEST CHECK BALANCE
+	fmt.Println("=== Testing Check Balance ===")
+	balance, err := atmServ.CheckBalance("CARD-001", "1234")
+	if err != nil {
+		fmt.Println("❌ Error checking balance:", err)
+	} else {
+		fmt.Println("✅ Balance check successful!")
+		fmt.Printf("   Current Balance: ₹%.2f\n\n", balance)
+	}
+
+	// 8. TEST TRANSACTION HISTORY
+	fmt.Println("=== Transaction History ===")
+	transactions, err := transactionServ.GetTransactionHistory("ACC-001")
+	if err != nil {
+		fmt.Println("❌ Error getting transaction history:", err)
+	} else {
+		fmt.Printf("Total Transactions: %d\n", len(transactions))
+		for i, txn := range transactions {
+			fmt.Printf("%d. %s - ₹%.2f - %s - %s\n",
+				i+1, txn.Type, txn.Amount, txn.Status, txn.CreatedAt.Format("2006-01-02 15:04:05"))
+		}
+	}
+
+	fmt.Println("\n=== ATM System Test Complete ===")
 }

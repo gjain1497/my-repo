@@ -223,16 +223,19 @@ The expectation was to discuss database schema/ Database system to use and write
 
 
 
-PubSub Like Kafka
-Notification System
-Car Rental
+PubSub Like Kafka -> Done
+Notification System 
+Car Rental -> Done
+snake ladder -> done
+tic tac toe -> done
+chess -> done
 Spotify
 Uber
 Elevator
 Chess
 Amazon Locker System
-Vending Machine
-ATM Machine
+Vending Machine 
+ATM Machine -> Done
 Stock Broker
 File System
 Logger
@@ -244,8 +247,7 @@ Linkedin
 Cache
 TrueCaller
 Airline Management System
-Snake and Ladder
-Tic Tac Toe 
+
 
 Design an extensible solution to implement a search filter in OOD for a directory, matching files by size or name.
 Design a library to read a directory and perform operations such as filtering by file type and size constraints.

@@ -124,7 +124,7 @@ Great question bro! 🔥
 
 🤔 Let's Analyze Both:
 Option A: Add Bookings map in VehicleService
-gotype VehicleService struct {
+gotype VehicleService struct {  
     Vehicles map[string]*Vehicle
     Bookings map[string][]*Booking  // vehicleId → []Booking
 }

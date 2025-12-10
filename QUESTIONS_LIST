@@ -1,0 +1,87 @@
+Design Truecaller
+Design JsonParser
+Design Coupon Management system
+Design Library Management System
+Design Snake and Ladder Game
+Design Bill Sharing/Expense Sharing like Splitwise
+Design Amazon Locker Service
+Design Vehicle/Car Rental Application like Zoomcar
+Design Distributed ID Generation like Twitter Snowflake ID
+Implement a logger
+Cab Booking like Uber, Ola
+Design Parking Lot System
+Design Chess Game
+Design Cache System
+Design an Online Book Reader System
+Design an Online Hotel Booking System
+Design a Logistics System
+Design Tic Tac Toe
+Design a Configuration Management System
+Design a Vending Machine
+Design Maps Navigator Client for different transportation types (OOD)
+Design a JSON Parser from scratch
+Design Elevator
+CricInfo/Cricbuzz
+TikTok
+Pinterest
+Movie Ticket Booking
+Uber Eats/DoorDash/Swiggy
+E-commerce Review System
+https://leetcode.com/discuss/post/4491846/wayfair-sde2-l2-4-onsite-virtual-coupon-czkci/
+
+
+Uber LLD
+
+Compile List of ALL UBER LLD Recent Questions -> https://medium.com/@prashant558908/uber-low-level-design-interview-questions-from-recent-interviews-7035fadfcb3d
+
+Question was a variation of meeting scheduler. N rooms are given and streams of times will be given and we have to schedule meeting. After storing the meeting we have to store audit logs for each room. We have to delete audit logs after x days. Follow up questions were that rooms will have capactiy constraints so that we have to check if we can organise meeting with given capacity. Also we have to minimise spillage of free time while sceduling meetings.
+Spillage eg: if room1 is free from 9-10 am and room2 is free from 9am - 12pm and if a meeting comes for 9-10 am then we should assign it to room1 as room1 will be booked for day . Concurrency handling was expected.
+
+
+Design a leaderboard.
+Ask 1: Design a simple use case.
+Ask 2: Implement caching.
+Ask 3: Make it thread-safe.
+I completed the first two asks and discussed all possible approaches for the third. I asked for 10 more minutes to implement a keyed executor.
+
+
+Round 2 – Low-Level Design (LLD)
+Problem Statement:
+Design a Train-Platform Management System with functionalities:
+
+Assign trains to platforms based on input.
+Query which train is at a given platform at a specific time.
+Query which platform a train is at, at a specific time.
+Expectations:
+
+Write runnable code (in my preferred language – chose Java).
+Explain design patterns used.
+Walkthrough every step while coding.
+
+
+
+Question: Well defined logging library API with get and set methods. Data was expected to be handled in memory.
+
+Performance: First implemented functionally complete solution with appropriate design patterns such as singleton and fluent. Then discussed and partially implemented improvements such as concurrency handling with locking and time complexity optimisation.
+
+Ran into some strange compilation issues while working on the optimisation and wasn't able to fully complete all the requirements discussed, but no major gaps.
+
+
+
+gave a problem similar to job scheduler
+
+
+
+Focus: LLD
+Problem:
+Implement file system APIs:
+
+mkdir
+pwd
+cd
+I was asked on focus on providing a working solution and that's it. mkdir and pwd were easy. cd was difficult with a wildcard: * that means the * could match any of '.', '..' or any children directory.
+
+
+
+LLD problem - different kind of question. Don't remember the complete question but related to counter problem
+
